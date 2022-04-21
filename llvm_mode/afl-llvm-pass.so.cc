@@ -44,6 +44,7 @@
 #include "llvm/IR/IRBuilder.h"
 #include "llvm/IR/LegacyPassManager.h"
 #include "llvm/IR/Module.h"
+#include "llvm/Demangle/Demangle.h"
 #include "llvm/Support/Debug.h"
 #include "llvm/Transforms/IPO/PassManagerBuilder.h"
 #include "llvm/Support/CommandLine.h"
@@ -311,6 +312,7 @@ bool AFLCoverage::runOnModule(Module &M) {
       for (auto &BB : F) {
 
         std::string bb_name("");
+        std::string location("");
         std::string filename;
         unsigned line;
 
@@ -330,6 +332,7 @@ bool AFLCoverage::runOnModule(Module &M) {
 
             bb_name = filename + ":" + std::to_string(line);
           }
+            location = filename + ":" + std::to_string(line);
 
           if (!is_target) {
               for (auto &target : targets) {
@@ -354,8 +357,12 @@ bool AFLCoverage::runOnModule(Module &M) {
                 filename = filename.substr(found + 1);
 
               if (auto *CalledF = c->getCalledFunction()) {
-                if (!isBlacklisted(CalledF))
-                  bbcalls << bb_name << "," << CalledF->getName().str() << "\n";
+                if (!isBlacklisted(CalledF)) {
+                  // bbcalls << bb_name << "," << CalledF->getName().str() << "\n";
+                  std::string mangledName = llvm::demangle(CalledF->getName().str());
+                  bbcalls << bb_name << "," << CalledF->getName().str() \
+                    << "," << location << "," << mangledName << "\n"; // the demangled name contains the func parametre types.
+                }
               }
             }
         }
@@ -401,8 +408,8 @@ bool AFLCoverage::runOnModule(Module &M) {
         }
 
         if (is_target)
-          ftargets << F.getName().str() << "\n";
-        fnames << F.getName().str() << "\n";
+          ftargets << F.getName().str() << "," << llvm::demangle(F.getName().str()) << "\n";
+        fnames << F.getName().str() << "," << llvm::demangle(F.getName().str())<< "\n";
       }
     }
 
