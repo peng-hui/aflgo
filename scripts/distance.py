@@ -174,7 +174,7 @@ if __name__ == '__main__':
     with open(args.targets, "r") as f:
       targets = []
       for line in f.readlines ():
-        line = line.strip ()
+        line = line.strip().split(',')[0]
         for target in find_nodes(line):
           targets.append (target)
 
@@ -185,4 +185,4 @@ if __name__ == '__main__':
   print ("Calculating distance..")
   with open(args.out, "w") as out, open(args.names, "r") as f:
     for line in f.readlines():
-      distance (line.strip())
+      distance (line.strip().split(',')[0])
