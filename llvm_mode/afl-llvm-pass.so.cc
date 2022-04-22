@@ -291,6 +291,7 @@ bool AFLCoverage::runOnModule(Module &M) {
     std::ofstream bbcalls(OutDirectory + "/BBcalls.txt", std::ofstream::out | std::ofstream::app);
     std::ofstream fnames(OutDirectory + "/Fnames.txt", std::ofstream::out | std::ofstream::app);
     std::ofstream ftargets(OutDirectory + "/Ftargets.txt", std::ofstream::out | std::ofstream::app);
+    std::ofstream funcloc(OutDirectory + "/funcloc.txt", std::ofstream::out | std::ofstream::app);
 
     /* Create dot-files directory */
     std::string dotfiles(OutDirectory + "/dot-files");
@@ -299,9 +300,22 @@ bool AFLCoverage::runOnModule(Module &M) {
     }
 
     for (auto &F : M) {
+      std::string funcName = F.getName().str();
+      std::string demangledFName = llvm::demangle(funcName);
+      std::size_t Fpos = demangledFName.find_first_of("(");
+      llvm::MDNode * funcMD = F.getMetadata("dbg");
+      if (funcMD) {
+        if(auto *subprogram = dyn_cast<DISubprogram>(funcMD)){
+        std::string Filename;
+        unsigned Line;
+        Line = subprogram->getLine();
+        Filename = subprogram->getFilename().str();
+
+        funcloc<< funcName << "," << demangledFName.substr(0, Fpos) << "," << Filename << ":" << Line << "\n";
+        }
+      }
 
       bool has_BBs = false;
-      std::string funcName = F.getName().str();
 
       /* Black list of function names */
       if (isBlacklisted(&F)) {
@@ -359,9 +373,11 @@ bool AFLCoverage::runOnModule(Module &M) {
               if (auto *CalledF = c->getCalledFunction()) {
                 if (!isBlacklisted(CalledF)) {
                   // bbcalls << bb_name << "," << CalledF->getName().str() << "\n";
-                  std::string mangledName = llvm::demangle(CalledF->getName().str());
+                  std::string demangledName = llvm::demangle(CalledF->getName().str());
+                  std::size_t pos = demangledName.find_first_of("(");
                   bbcalls << bb_name << "," << CalledF->getName().str() \
-                    << "," << location << "," << mangledName << "\n"; // the demangled name contains the func parametre types.
+                    << "," << location << "," << demangledName.substr(0, pos) \
+                   << "," << demangledFName.substr(0, Fpos) << "\n"; // the demangled name contains the func parametre types.
                 }
               }
             }
@@ -407,9 +423,10 @@ bool AFLCoverage::runOnModule(Module &M) {
           WriteGraph(cfgFile, &F, true);
         }
 
-        if (is_target)
-          ftargets << F.getName().str() << "," << llvm::demangle(F.getName().str()) << "\n";
-        fnames << F.getName().str() << "," << llvm::demangle(F.getName().str())<< "\n";
+        if (is_target) {
+          ftargets << F.getName().str() << "," << demangledFName.substr(0, Fpos)<< "\n";
+        }
+        fnames << F.getName().str() << "," << demangledFName.substr(0, Fpos) << "\n";
       }
     }
 
