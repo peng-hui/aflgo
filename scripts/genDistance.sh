@@ -7,6 +7,7 @@ fi
 
 BINARIES=$(readlink -e $1)
 TMPDIR=$(readlink -e $2)
+JOERN="/root/joern"
 AFLGO="$( cd "$( dirname "${BASH_SOURCE[0]}" )" && pwd )"
 fuzzer=""
 if [ $# -eq 3 ]; then
@@ -103,6 +104,7 @@ if [ $RESUME -le $STEP ]; then
     FAIL=1
     next_step
   fi
+  $AFLGO/callgraph.py -t $TMPDIR/BBtargets.txt -c $TMPDIR/cdg -a $TMPDIR/ast -cg $TMPDIR/distance.callgraph.txt -bc $TMPDIR/BBcalls.txt -fl $TMPDIR/funcloc.txt
 
   printf "($STEP) Computing distance for control-flow graphs "
   for f in $(ls -1d $TMPDIR/dot-files/cfg.*.dot); do
