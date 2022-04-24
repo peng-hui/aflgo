@@ -32,13 +32,18 @@ if __name__ == '__main__':
             mangledName = tokens[1]
             uniqueId = tokens[2] + tokens[3]
             functionMap[uniqueId] = mangledName
+    functionMap1 = {}
+    userDefinedFunctions = []
     with open(args.funclocs, 'r') as fp:
         funcs = fp.readlines()
         for func in funcs:
             tokens = func.strip().split(',')
             mangledName = tokens[0]
             uniqueId = tokens[2] + tokens[1]
-            functionMap[uniqueId] = mangledName
+            userDefinedFunctions.append(mangledName)
+            #functionMap1[mangledName] = uniqueId
+            functionMap1[uniqueId] = mangledName
+
     target_locations = []
     with open(args.targets, 'r') as fp:
         target_locations = [i.strip() for i in fp.readlines()]
@@ -50,73 +55,78 @@ if __name__ == '__main__':
     fileNumber = len(os.listdir(args.cdg))
     target_nodes = []
     target_functions = []
-    print(fileNumber)
     for n in range(fileNumber):
-        if n == 0:
-            # skip global
-            continue
-        print(n)
         astFile = join(args.ast, '%d-ast.dot' % n)
         cdgFile = join(args.cdg, '%d-cdg.dot' % n)
         with open(cdgFile, 'r') as fp:
             l = fp.readline().strip().split('"')
             if len(l) != 3:
                 continue
-            if l[1] not in functionMap.keys():
+            if l[1] not in functionMap1.keys():
                 continue
             
         AST = nx.DiGraph(nx.drawing.nx_pydot.read_dot(astFile))
-        caller = functionMap[AST.name.strip()]
+        #caller = AST.name.strip()
+        caller = functionMap1[AST.name.strip()] # get mangled name
         if caller not in CG.nodes():
             CG.add_node(caller)
 
-        allCallsites = []
+        allCallsites = {}
         has_target = False
         for node, data in AST.nodes(data=True):
             label = data.get('label')
             tokens = label.strip('")(').split(',')
             if not tokens[-1].startswith(':') and tokens[0] != 'UNKNOWN': # can locate the filename
-                if 'CALL' in label and '<operator>' not in label and tokens[-1] + tokens[1] in functionMap.keys():
-                    allCallsites.append([node, tokens[-1] + tokens[1]]) 
+                if 'CALL' in label and (tokens[-1] + tokens[1]) in functionMap.keys() and functionMap[tokens[-1] + tokens[1]] in userDefinedFunctions: #functionMap1.keys():
+                    allCallsites[node] = tokens[-1] + tokens[1]
                 if tokens[-1] in target_locations:
                     has_target = True
                     target_nodes.append(node + "," + tokens[-1] + "," + tokens[1])
                     target_functions.append(caller)
 
         CDG = nx.DiGraph(nx.drawing.nx_pydot.read_dot(cdgFile))
-        allRelatedCallsites = [n for n, d in CDG.nodes(data=True) if 'CALL' in d.get('label') and '<operator>' not in d.get('label')]
+        allRelatedCallsites = []
+        for node, data in CDG.nodes(data=True):
+            label = data.get('label')
+            tokens = label.strip('")(').split(',')
+            if not tokens[-1].startswith(':') and tokens[0] != 'UNKNOWN': # can locate the filename
+                if 'CALL' in label and (tokens[-1] + tokens[1]) in functionMap.keys() and functionMap[tokens[-1] + tokens[1]] in userDefinedFunctions: #functionMap1.keys():
+                    allRelatedCallsites.append(node)
 
         # sources might not be functon entry.
         sources = [n for n in CDG.nodes() if CDG.in_degree(n) == 0]
+        print(len(sources), 'sources')
+        print(len(allRelatedCallsites), 'callsites')
+        if len(allRelatedCallsites) == 0 or len(sources) == 0:
+            continue
 
-        distances = {}
+        shortestDistances = {}
         for callId in allRelatedCallsites:
+            calleeName = allCallsites[callId]
+            mangledCalleeName = functionMap[calleeName]
+            #definitionCalleeName = functionMap1[mangledCalleeName]
             for source in sources:
                 try:
-                    distances[callId] = nx.dijkstra_path_length (CDG, source, callId)
+                    distance = nx.dijkstra_path_length (CDG, source, callId)
+                    if mangledCalleeName in shortestDistances.keys():
+                        shortestDistances[mangledCalleeName] = min(shortestDistances[mangledCalleeName], distance)
+                    else:
+                        shortestDistances[mangledCalleeName] = distance
                 except nx.NetworkXNoPath:
                     pass
 
-        shortestDistances = {}
-        for callnode in allCallsites:
-            callId = callnode[0]
-            calleeName = callnode[1]
-            calleeName = functionMap[callnode[1]]
-            if callId not in distances.keys():
-                shortestDistances[calleeName] = 0
-            else:
-                if calleeName in shortestDistances.keys():
-                    shortestDistances[calleeName] = min(shortestDistances[calleeName], distances[callId])
-                else:
-                    shortestDistances[calleeName] = distances[callId]
+        for (callId, calleeName) in allCallsites.items():
+            mangledCalleeName = functionMap[calleeName]
+            if mangledCalleeName not in shortestDistances.keys():
+                shortestDistances[mangledCalleeName] = 0
         for (callee, dis) in shortestDistances.items():
             print(callee, dis)
             if callee not in CG.nodes():
                 CG.add_node(callee)
             CG.add_edge(caller, callee, weight=dis)
 
-        #with open('cg-distance-%s.txt' % caller, 'w') as fp:
-        #    fp.write('\n'.join(["%s,%f" % (key, val) for (key, val) in shortestDistances.items()]))
+        with open(join(args.out, 'cg-distance-%s.txt' % caller), 'w') as fp:
+            fp.write('\n'.join(["%s,%f" % (key, val) for (key, val) in shortestDistances.items()]))
     if len(target_functions) == 0:
         print('no target function found, and should exit')
         exit(0)
