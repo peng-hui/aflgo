@@ -124,6 +124,49 @@ namespace {
 
 }
 
+class FileReader{
+public:
+    FileReader(std::string filename);
+    ~FileReader();
+    bool readLine(std::string * str);
+private:
+    std::ifstream  *infile;
+    std::string filename;
+};
+
+FileReader::FileReader(std::string filename) :filename(filename){
+    infile = new std::ifstream(filename, std::ios::in);
+    assert(infile->is_open());
+}
+
+FileReader::~FileReader(){
+    infile->close();
+    delete infile;
+}
+
+bool FileReader::readLine(std::string * str){
+    if(!infile->eof()){
+        getline(*infile,*str);
+        return true;
+    }else{
+        return false;
+    }
+}
+
+std::vector<std::string> LocList = {};
+
+static void rtrim(std::string &s) {
+    s.erase(std::find_if(s.rbegin(), s.rend(), [](unsigned char ch) {
+        return !std::isspace(ch);
+    }).base(), s.end());
+}
+
+bool inTrace(std::string loc) {
+  if(std::find(LocList.begin(), LocList.end(), loc) != LocList.end())
+    return true;
+  return false;
+}
+
 char AFLCoverage::ID = 0;
 
 static void getDebugLoc(const Instruction *I, std::string &Filename,
@@ -181,7 +224,7 @@ static bool isBlacklisted(const Function *F) {
 
 bool AFLCoverage::runOnModule(Module &M) {
 
-  bool is_aflgo = false;
+  bool is_aflgo = true;
   bool is_aflgo_preprocessing = false;
 
   if (!TargetsFile.empty() && !DistanceFile.empty()) {
@@ -410,7 +453,6 @@ bool AFLCoverage::runOnModule(Module &M) {
           Constant *instrumented = M.getOrInsertFunction("llvm_profiling_call", FTy);
           Builder.CreateCall(instrumented, {bbnameVal});
 #endif
-
         }
       }
 
@@ -432,6 +474,16 @@ bool AFLCoverage::runOnModule(Module &M) {
 
   } else {
     /* Distance instrumentation */
+    FileReader fr("trace.txt"); //read from trace
+    std::ofstream log1("log.txt", std::ofstream::out | std::ofstream::app);
+    std::string loc;
+    while(fr.readLine(&loc)) {
+      rtrim(loc);
+      if(loc != "") {
+        LocList.push_back(loc);
+      }
+      log1 << loc << "\n";
+    }
 
     LLVMContext &C = M.getContext();
     IntegerType *Int8Ty  = IntegerType::getInt8Ty(C);
@@ -455,8 +507,22 @@ bool AFLCoverage::runOnModule(Module &M) {
         new GlobalVariable(M, PointerType::get(Int8Ty, 0), false,
                            GlobalValue::ExternalLinkage, 0, "__afl_area_ptr");
 
+    GlobalVariable *AFLCallPtr =
+        new GlobalVariable(M, PointerType::get(Int8Ty, 0), false,
+                           GlobalValue::ExternalLinkage, 0, "__afl_call_ptr");
+    /*
+     * read from file to obtain the trace.
+     * at each call site, check the call stack, and give a score. 
+     * how to give a score? dynamically adjust.
+     */
+
+
     GlobalVariable *AFLPrevLoc = new GlobalVariable(
         M, Int32Ty, false, GlobalValue::ExternalLinkage, 0, "__afl_prev_loc",
+        0, GlobalVariable::GeneralDynamicTLSModel, 0, false);
+
+    GlobalVariable *AFLCallLoc = new GlobalVariable(
+        M, Int32Ty, false, GlobalValue::ExternalLinkage, 0, "__afl_call_loc",
         0, GlobalVariable::GeneralDynamicTLSModel, 0, false);
 
     for (auto &F : M) {
@@ -469,20 +535,50 @@ bool AFLCoverage::runOnModule(Module &M) {
 
         if (is_aflgo) {
 
-          std::string bb_name;
+          std::string bb_name("");
+          std::string location("");
+          std::string filename;
+          unsigned line;
           for (auto &I : BB) {
-            std::string filename;
-            unsigned line;
             getDebugLoc(&I, filename, line);
 
             if (filename.empty() || line == 0)
               continue;
+
+            if (bb_name.empty()) {
+
             std::size_t found = filename.find_last_of("/\\");
             if (found != std::string::npos)
               filename = filename.substr(found + 1);
 
             bb_name = filename + ":" + std::to_string(line);
-            break;
+            }
+            location = filename + ":" + std::to_string(line);
+
+            // we do not even need to emphasize it is a call.
+            if (auto *c = dyn_cast<CallInst>(&I)){ 
+              log1 << "dyn_cast"<<"\n";
+              log1 << "location" << location <<"\n";
+             if(inTrace(location)) {
+              log1 << "inTrace"<<"\n";
+              IRBuilder<> CallIRB(&I);
+              CallIRB.SetInsertPoint(&I);
+              LoadInst *CallLoc = CallIRB.CreateLoad(AFLCallLoc);
+              CallLoc->setMetadata(M.getMDKindID("nosanitize"), MDNode::get(C, None));
+              Value *CallLocCasted = CallIRB.CreateZExt(CallLoc, CallIRB.getInt32Ty());
+              Value *Incr = CallIRB.CreateAdd(CallLocCasted, ConstantInt::get(Int32Ty, 1));
+              StoreInst *Store = CallIRB.CreateStore(Incr, AFLCallLoc);
+              Store->setMetadata(M.getMDKindID("nosanitize"), MDNode::get(C, None));
+              Value *locationVal = CallIRB.CreateGlobalStringPtr(location);
+              Type *Args[] = {
+                  Type::getInt8PtrTy(M.getContext()) //uint8_t* bb_name
+              };
+              FunctionType *FTy = FunctionType::get(Type::getVoidTy(M.getContext()), Args, false);
+              //FunctionType *FTy = FunctionType::get(Type::getVoidTy(M.getContext()), false);
+              auto instrumented = M.getOrInsertFunction("call_tracing", FTy);
+              CallIRB.CreateCall(instrumented, {locationVal});
+            }
+          }
           }
 
           if (!bb_name.empty()) {
@@ -507,6 +603,7 @@ bool AFLCoverage::runOnModule(Module &M) {
           }
         }
 
+        // if CG there is no path to target function, there is no distance.
         BasicBlock::iterator IP = BB.getFirstInsertionPt();
         IRBuilder<> IRB(&(*IP));
 

@@ -68,7 +68,17 @@ static const unsigned int prime_2 = 5009;
 u8  __afl_area_initial[MAP_SIZE + 16];
 u8* __afl_area_ptr = __afl_area_initial;
 
+/* just keep another area for the call stack.
+ * u8 can represent 2^8 different functions and their ids.
+ * We record a max length of CALL_STACK_SIZE here.
+ */
+u8  __afl_call_initial[CALL_STACK_SIZE];
+u8* __afl_call_ptr = __afl_call_initial;
+u8  __afl_target_call_initial[CALL_STACK_SIZE];
+u8* __afl_target_call_ptr = __afl_target_call_initial;
+
 __thread u32 __afl_prev_loc;
+__thread u32 __afl_call_loc;
 
 
 /* Running in persistent mode? */
@@ -100,6 +110,9 @@ static void __afl_map_shm(void) {
        our parent doesn't give up on us. */
 
     __afl_area_ptr[0] = 1;
+
+    __afl_call_ptr = (u8 *) &__afl_area_ptr[MAP_SIZE + 16];
+    __afl_target_call_ptr = (u8 *) &__afl_call_ptr[CALL_STACK_SIZE];
 
   }
 
@@ -204,8 +217,11 @@ int __afl_persistent_loop(unsigned int max_cnt) {
     if (is_persistent) {
 
       memset(__afl_area_ptr, 0, MAP_SIZE + 16);
+      memset(__afl_call_ptr, 0, CALL_STACK_SIZE);
+      memset(__afl_target_call_ptr, 0, CALL_STACK_SIZE);
       __afl_area_ptr[0] = 1;
       __afl_prev_loc = 0;
+      __afl_call_loc = 0;
     }
 
     cycle_cnt  = max_cnt;
@@ -222,6 +238,7 @@ int __afl_persistent_loop(unsigned int max_cnt) {
 
       __afl_area_ptr[0] = 1;
       __afl_prev_loc = 0;
+      __afl_call_loc = 0;
 
       return 1;
 
@@ -478,3 +495,17 @@ void llvm_profiling_call(const char* bbname) {
     }
 }
 #endif /* ^AFLGO_TRACING */
+
+void call_tracing(const char* loc)
+	__attribute__((visibility("default")));
+
+void call_tracing(const char* loc){
+   // each function has a bit number id.
+   // this function checks if it maps the call trace.
+   // can directly access the callstack.
+   FILE* filefd = NULL;
+  printf("%s\n", loc);
+  filefd = fopen("test-t.txt", "a+");
+  fprintf(filefd, "%s %d\n", loc, __afl_call_loc);
+  fflush(filefd);
+}
