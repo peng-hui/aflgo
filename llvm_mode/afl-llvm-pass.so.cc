@@ -161,10 +161,12 @@ static void rtrim(std::string &s) {
     }).base(), s.end());
 }
 
-bool inTrace(std::string loc) {
-  if(std::find(LocList.begin(), LocList.end(), loc) != LocList.end())
-    return true;
-  return false;
+int inTrace (std::string loc) {
+  auto it = std::find(LocList.begin(), LocList.end(), loc);
+  if (it != LocList.end()) {
+    return it - LocList.begin() + 1;
+  }
+  return 0;
 }
 
 char AFLCoverage::ID = 0;
@@ -224,7 +226,7 @@ static bool isBlacklisted(const Function *F) {
 
 bool AFLCoverage::runOnModule(Module &M) {
 
-  bool is_aflgo = true;
+  bool is_aflgo = false;
   bool is_aflgo_preprocessing = false;
 
   if (!TargetsFile.empty() && !DistanceFile.empty()) {
@@ -474,16 +476,6 @@ bool AFLCoverage::runOnModule(Module &M) {
 
   } else {
     /* Distance instrumentation */
-    FileReader fr("trace.txt"); //read from trace
-    std::ofstream log1("log.txt", std::ofstream::out | std::ofstream::app);
-    std::string loc;
-    while(fr.readLine(&loc)) {
-      rtrim(loc);
-      if(loc != "") {
-        LocList.push_back(loc);
-      }
-      log1 << loc << "\n";
-    }
 
     LLVMContext &C = M.getContext();
     IntegerType *Int8Ty  = IntegerType::getInt8Ty(C);
@@ -524,6 +516,17 @@ bool AFLCoverage::runOnModule(Module &M) {
     GlobalVariable *AFLCallLoc = new GlobalVariable(
         M, Int32Ty, false, GlobalValue::ExternalLinkage, 0, "__afl_call_loc",
         0, GlobalVariable::GeneralDynamicTLSModel, 0, false);
+  
+    FileReader fr("trace.txt"); //read from trace
+    std::ofstream log1("log.txt", std::ofstream::out | std::ofstream::app);
+    std::string loc;
+    while(fr.readLine(&loc)) {
+      rtrim(loc);
+      if(loc != "") {
+        LocList.push_back(loc);
+      }
+      log1 << loc << "\n";
+    }
 
     for (auto &F : M) {
 
@@ -559,24 +562,38 @@ bool AFLCoverage::runOnModule(Module &M) {
             if (auto *c = dyn_cast<CallInst>(&I)){ 
               log1 << "dyn_cast"<<"\n";
               log1 << "location" << location <<"\n";
-             if(inTrace(location)) {
+             unsigned int tmp =(unsigned) inTrace(location);
+              log1 << tmp <<"\n";
+             if(tmp > 0) {
               log1 << "inTrace"<<"\n";
               IRBuilder<> CallIRB(&I);
               CallIRB.SetInsertPoint(&I);
               LoadInst *CallLoc = CallIRB.CreateLoad(AFLCallLoc);
               CallLoc->setMetadata(M.getMDKindID("nosanitize"), MDNode::get(C, None));
-              Value *CallLocCasted = CallIRB.CreateZExt(CallLoc, CallIRB.getInt32Ty());
-              Value *Incr = CallIRB.CreateAdd(CallLocCasted, ConstantInt::get(Int32Ty, 1));
+              // Value *CallLocCasted = CallIRB.CreateZExt(CallLoc, CallIRB.getInt32Ty());
+              //
+
+              LoadInst *CallPtr = CallIRB.CreateLoad(AFLCallPtr);
+              CallPtr->setMetadata(M.getMDKindID("nosanitize"), MDNode::get(C, None));
+              Value *CallPtrIdx = CallIRB.CreateGEP(CallPtr, CallLoc);
+              StoreInst *CallStore = CallIRB.CreateStore(ConstantInt::get(Int8Ty, tmp & 0xFF), CallPtrIdx);
+              CallStore->setMetadata(M.getMDKindID("nosanitize"), MDNode::get(C, None));
+
+              Value *Incr = CallIRB.CreateAdd(CallLoc, ConstantInt::get(Int32Ty, 1));
               StoreInst *Store = CallIRB.CreateStore(Incr, AFLCallLoc);
               Store->setMetadata(M.getMDKindID("nosanitize"), MDNode::get(C, None));
-              Value *locationVal = CallIRB.CreateGlobalStringPtr(location);
+
               Type *Args[] = {
-                  Type::getInt8PtrTy(M.getContext()) //uint8_t* bb_name
+                Int32Ty
               };
               FunctionType *FTy = FunctionType::get(Type::getVoidTy(M.getContext()), Args, false);
-              //FunctionType *FTy = FunctionType::get(Type::getVoidTy(M.getContext()), false);
               auto instrumented = M.getOrInsertFunction("call_tracing", FTy);
-              CallIRB.CreateCall(instrumented, {locationVal});
+              CallIRB.CreateCall(instrumented, {ConstantInt::get(Int32Ty, LocList.size())});
+              CallIRB.SetInsertPoint(I.getNextNode());
+              CallLoc = CallIRB.CreateLoad(AFLCallLoc);
+              Value *Decr = CallIRB.CreateSub(CallLoc, ConstantInt::get(Int32Ty, 1));
+              StoreInst *DecrStore = CallIRB.CreateStore(Decr, AFLCallLoc);
+              DecrStore->setMetadata(M.getMDKindID("nosanitize"), MDNode::get(C, None));
             }
           }
           }
