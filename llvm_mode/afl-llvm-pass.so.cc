@@ -75,6 +75,11 @@ cl::opt<std::string> TargetsFile(
     cl::desc("Input file containing the target lines of code."),
     cl::value_desc("targets"));
 
+cl::opt<std::string> TraceFile(
+    "trace",
+    cl::desc("Input file containing the traces/callstack."),
+    cl::value_desc("trace"));
+
 cl::opt<std::string> OutDirectory(
     "outdir",
     cl::desc("Output directory where Ftargets.txt, Fnames.txt, and BBnames.txt are generated."),
@@ -124,42 +129,7 @@ namespace {
 
 }
 
-class FileReader{
-public:
-    FileReader(std::string filename);
-    ~FileReader();
-    bool readLine(std::string * str);
-private:
-    std::ifstream  *infile;
-    std::string filename;
-};
-
-FileReader::FileReader(std::string filename) :filename(filename){
-    infile = new std::ifstream(filename, std::ios::in);
-    assert(infile->is_open());
-}
-
-FileReader::~FileReader(){
-    infile->close();
-    delete infile;
-}
-
-bool FileReader::readLine(std::string * str){
-    if(!infile->eof()){
-        getline(*infile,*str);
-        return true;
-    }else{
-        return false;
-    }
-}
-
 std::vector<std::string> LocList = {};
-
-static void rtrim(std::string &s) {
-    s.erase(std::find_if(s.rbegin(), s.rend(), [](unsigned char ch) {
-        return !std::isspace(ch);
-    }).base(), s.end());
-}
 
 int inTrace (std::string loc) {
   auto it = std::find(LocList.begin(), LocList.end(), loc);
@@ -517,16 +487,15 @@ bool AFLCoverage::runOnModule(Module &M) {
         M, Int32Ty, false, GlobalValue::ExternalLinkage, 0, "__afl_call_loc",
         0, GlobalVariable::GeneralDynamicTLSModel, 0, false);
   
-    FileReader fr("trace.txt"); //read from trace
-    std::ofstream log1("log.txt", std::ofstream::out | std::ofstream::app);
+
+  std::ofstream log1("log.txt", std::ofstream::out | std::ofstream::app);
+  if (!TraceFile.empty()) {
+    std::ifstream tracefile(TraceFile);
     std::string loc;
-    while(fr.readLine(&loc)) {
-      rtrim(loc);
-      if(loc != "") {
+    while (std::getline(tracefile, loc))
         LocList.push_back(loc);
-      }
-      log1 << loc << "\n";
-    }
+    tracefile.close();
+  }
 
     for (auto &F : M) {
 
