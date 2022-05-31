@@ -258,6 +258,7 @@ struct queue_entry {
   u32 tc_ref;                         /* Trace bytes ref count            */
 
   double distance;                    /* Distance to targets              */
+  double ratio;                   /* Call fram to target call stack */
 
   struct queue_entry *next,           /* Next element, if any             */
                      *next_100;       /* 100 elements ahead               */
@@ -285,6 +286,7 @@ static struct extra_data* a_extras;   /* Automatically selected extras    */
 static u32 a_extras_cnt;              /* Total number of tokens available */
 
 static double cur_distance = -1.0;     /* Distance of executed input       */
+static double cur_ratio = 0;     /* Distance of executed input       */
 static double max_distance = -1.0;     /* Maximal distance for any input   */
 static double min_distance = -1.0;     /* Minimal distance for any input   */
 static u32 t_x = 10;                  /* Time to exploitation (Default: 10 min) */
@@ -800,6 +802,7 @@ static void add_to_queue(u8* fname, u32 len, u8 passed_det) {
   q->passed_det   = passed_det;
 
   q->distance = cur_distance;
+  q->ratio = cur_ratio;
   if (cur_distance > 0) {
 
     if (max_distance <= 0) {
@@ -808,7 +811,6 @@ static void add_to_queue(u8* fname, u32 len, u8 passed_det) {
     }
     if (cur_distance > max_distance) max_distance = cur_distance;
     if (cur_distance < min_distance) min_distance = cur_distance;
-
   }
 
   if (q->depth > max_depth) max_depth = q->depth;
@@ -916,7 +918,9 @@ static inline u8 has_new_bits(u8* virgin_map) {
   /* Calculate distance of current input to targets */
   u64* total_distance = (u64*) (trace_bits + MAP_SIZE);
   u64* total_count = (u64*) (trace_bits + MAP_SIZE + 8);
-
+  // the count means the number of BB executed in trace.
+  // if we only consider the ones in the sequence?
+  // We consider 
   if (*total_count > 0)
     cur_distance = (double) (*total_distance) / (double) (*total_count);
   else
@@ -939,6 +943,7 @@ static inline u8 has_new_bits(u8* virgin_map) {
     cur_distance = -1.0;
 
 #endif /* ^__x86_64__ */
+  cur_ratio = *(double*) (trace_bits + MAP_SIZE + 16 + CALL_STACK_SIZE); 
 
   u8   ret = 0;
 
@@ -2643,6 +2648,8 @@ static u8 calibrate_case(char** argv, struct queue_entry* q, u8* use_mem,
       has_new_bits(virgin_bits);
 
       q->distance = cur_distance;
+      q->ratio = cur_ratio;
+
       if (cur_distance > 0) {
 
         if (max_distance <= 0) {
@@ -4856,7 +4863,9 @@ static u32 calculate_score(struct queue_entry* q) {
 
     if (normalized_d >= 0) {
 
-        double p = (1.0 - normalized_d) * (1.0 - T) + 0.5 * T;
+        double p0 = (1.0 - normalized_d) * (1.0 - T) + 0.5 * T;
+        double p1 = (1.0 - q->ratio) * (1.0 - T) + 0.5 * T;
+        double p = p0 > p1? p0: p1;
         power_factor = pow(2.0, 2.0 * (double) log2(MAX_FACTOR) * (p - 0.5));
 
     }// else WARNF ("Normalized distance negative: %f", normalized_d);
@@ -4870,7 +4879,7 @@ static u32 calculate_score(struct queue_entry* q) {
   if (perf_score > HAVOC_MAX_MULT * 100) perf_score = HAVOC_MAX_MULT * 100;
 
   /* AFLGO-DEBUGGING */
-  // fprintf(stderr, "[Time %llu] q->distance: %4lf, max_distance: %4lf min_distance: %4lf, T: %4.3lf, power_factor: %4.3lf, adjusted perf_score: %4d\n", t, q->distance, max_distance, min_distance, T, power_factor, perf_score);
+  fprintf(stderr, "[Time %llu] q->distance: %4lf, max_distance: %4lf min_distance: %4lf, T: %4.3lf, power_factor: %4.3lf, adjusted perf_score: %4d\n", t, q->distance, max_distance, min_distance, T, power_factor, perf_score);
 
   return perf_score;
 
