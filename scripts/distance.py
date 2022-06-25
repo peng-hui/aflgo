@@ -68,6 +68,8 @@ def distance (name):
     if is_cg:
       for t in targets:
         try:
+          # for function targets.
+          # 
           shortest = nx.dijkstra_path_length (G, n, t)
           d += 1.0 / (1.0 + shortest)
           i += 1
@@ -77,15 +79,22 @@ def distance (name):
       for t_name, bb_d in bb_distance.items():
         di = 0.0
         ii = 0
+        shortest = 100000
         for t in find_nodes(t_name):
           try:
-            shortest = nx.dijkstra_path_length(G, n, t)
-            di += 1.0 / (1.0 + 10 * bb_d + shortest)
+            # distance = callsite2target * constant + shortest cfg distance.
+            # N - distance2callsite, the callsite means the target.
+            # I need to adjust that, in each function, there is only one target?
+            # each node I only consider the closest target?
+            temp = nx.dijkstra_path_length(G, n, t)
+            if temp < shortest:
+                shortest = temp
+            #di += 1.0 / (1.0 + 10 * bb_d + shortest)
             ii += 1
           except nx.NetworkXNoPath:
             pass
         if ii != 0:
-          d += di / ii
+          d += 1.0 / (1.0 + shortest)
           i += 1
 
     if d != 0 and (distance == -1 or distance > i / d) :
@@ -169,7 +178,6 @@ if __name__ == '__main__':
 
   # Process as CallGraph
   else:
-
     print ("Loading targets..")
     with open(args.targets, "r") as f:
       targets = []

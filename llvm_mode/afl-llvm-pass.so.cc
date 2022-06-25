@@ -315,9 +315,12 @@ bool AFLCoverage::runOnModule(Module &M) {
     }
 
     for (auto &F : M) {
+      std::string function_str("");
       std::string funcName = F.getName().str();
       std::string demangledFName = llvm::demangle(funcName);
       std::size_t Fpos = demangledFName.find_first_of("(");
+
+      bool has_BBs = false;
       llvm::MDNode * funcMD = F.getMetadata("dbg");
       if (funcMD) {
         if(auto *subprogram = dyn_cast<DISubprogram>(funcMD)){
@@ -326,11 +329,10 @@ bool AFLCoverage::runOnModule(Module &M) {
         Line = subprogram->getLine();
         Filename = subprogram->getFilename().str();
 
-        funcloc<< funcName << "," << demangledFName.substr(0, Fpos) << "," << Filename << ":" << Line << "\n";
+        function_str = funcName + "," + demangledFName.substr(0, Fpos) + "," + Filename + ":" + std::to_string(Line) + "\n";
+        funcloc << function_str;
         }
       }
-
-      bool has_BBs = false;
 
       /* Black list of function names */
       if (isBlacklisted(&F)) {
@@ -438,9 +440,10 @@ bool AFLCoverage::runOnModule(Module &M) {
         }
 
         if (is_target) {
-          ftargets << F.getName().str() << "," << demangledFName.substr(0, Fpos)<< "\n";
+          if(function_str.size() != 0)
+            ftargets << function_str;
         }
-        fnames << F.getName().str() << "," << demangledFName.substr(0, Fpos) << "\n";
+        // fnames << F.getName().str() << "," << demangledFName.substr(0, Fpos) << "\n";
       }
     }
 
@@ -545,7 +548,7 @@ bool AFLCoverage::runOnModule(Module &M) {
               LoadInst *CallPtr = CallIRB.CreateLoad(AFLCallPtr);
               CallPtr->setMetadata(M.getMDKindID("nosanitize"), MDNode::get(C, None));
               Value *CallPtrIdx = CallIRB.CreateGEP(CallPtr, CallLoc);
-              StoreInst *CallStore = CallIRB.CreateStore(ConstantInt::get(Int8Ty, tmp & 0xFF), CallPtrIdx);
+              StoreInst *CallStore = CallIRB.CreateStore(ConstantInt::get(Int8Ty, tmp & 0xFF), CallPtrIdx); // save afl_call_ptr[xx] = tmp
               CallStore->setMetadata(M.getMDKindID("nosanitize"), MDNode::get(C, None));
 
               Value *Incr = CallIRB.CreateAdd(CallLoc, ConstantInt::get(Int32Ty, 1));
@@ -558,7 +561,10 @@ bool AFLCoverage::runOnModule(Module &M) {
               FunctionType *FTy = FunctionType::get(Type::getVoidTy(M.getContext()), Args, false);
               auto instrumented = M.getOrInsertFunction("call_tracing", FTy);
               CallIRB.CreateCall(instrumented, {ConstantInt::get(Int32Ty, LocList.size())});
+              // before current callsite
+              // if matched, we only compute the last distance to target.
               CallIRB.SetInsertPoint(I.getNextNode());
+              // after current callsite.
               CallLoc = CallIRB.CreateLoad(AFLCallLoc);
               Value *Decr = CallIRB.CreateSub(CallLoc, ConstantInt::get(Int32Ty, 1));
               StoreInst *DecrStore = CallIRB.CreateStore(Decr, AFLCallLoc);

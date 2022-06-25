@@ -72,12 +72,14 @@ u8* __afl_area_ptr = __afl_area_initial;
  * u8 can represent 2^8 different functions and their ids.
  * We record a max length of CALL_STACK_SIZE here.
  */
-u8  __afl_call_initial[CALL_STACK_SIZE];
+u8  __afl_call_initial[CALL_STACK_SIZE + 8];
 u8* __afl_call_ptr = __afl_call_initial;
+
+double __afl_call_ratio_initial[1];
+double* __afl_call_ratio = __afl_call_ratio_initial;
 
 __thread u32 __afl_prev_loc;
 __thread u32 __afl_call_loc;
-__thread float __afl_call_ratio;
 
 
 /* Running in persistent mode? */
@@ -111,6 +113,7 @@ static void __afl_map_shm(void) {
     __afl_area_ptr[0] = 1;
 
     __afl_call_ptr = (u8 *) &__afl_area_ptr[MAP_SIZE + 16];
+    __afl_call_ratio = (double *) &__afl_call_ptr[CALL_STACK_SIZE + 8];
 
   }
 
@@ -216,10 +219,11 @@ int __afl_persistent_loop(unsigned int max_cnt) {
 
       memset(__afl_area_ptr, 0, MAP_SIZE + 16);
       memset(__afl_call_ptr, 0, CALL_STACK_SIZE);
+      memset(__afl_call_ptr + CALL_STACK_SIZE, 0xFF, 8);
       __afl_area_ptr[0] = 1;
       __afl_prev_loc = 0;
       __afl_call_loc = 0;
-      __afl_call_ratio = 0;
+      __afl_call_ratio_initial[0] = 0;
     }
 
     cycle_cnt  = max_cnt;
@@ -500,12 +504,20 @@ void call_tracing(const int32_t size)
 
 void call_tracing(const int32_t size){
   FILE* filefd = NULL;
-  int i = 0;
+  u64 i = 0;
   while (i < __afl_call_loc && i < CALL_STACK_SIZE && __afl_call_ptr[i] == i + 1) 
     i ++;
-  float ratio = (float)i/size;
-  if (__afl_call_ratio < ratio)
-    __afl_call_ratio = ratio;
+
+  double ratio = (double) i/size;
+  if (i == __afl_call_loc) {
+    // this means we can try to set distance/count = 0
+    memset(__afl_area_ptr + MAP_SIZE, 0, 16);
+    i = size - i;
+    //__afl_call_initial[CALL_STACK_SIZE] = (u8)((size - i) & 0xFF);
+    memcpy(__afl_call_ptr + CALL_STACK_SIZE, &i, sizeof(i));
+  }
+  if (*__afl_call_ratio < ratio)
+    *__afl_call_ratio = ratio;
   filefd = fopen("runtime-log.txt", "a+");
   fprintf(filefd, "%d %.2f %.2f \n", __afl_call_loc, ratio, __afl_call_ratio);
   fflush(filefd);
