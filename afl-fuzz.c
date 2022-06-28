@@ -918,13 +918,17 @@ static inline u8 has_new_bits(u8* virgin_map) {
   /* Calculate distance of current input to targets */
   u64* total_distance = (u64*) (trace_bits + MAP_SIZE);
   u64* total_count = (u64*) (trace_bits + MAP_SIZE + 8);
+  u8* unsat_site = (u8*) (trace_bits + MAP_SIZE + 16 + CALL_STACK_SIZE);
   // the count means the number of BB executed in trace.
   // if we only consider the ones in the sequence?
   // We consider 
+  u32 max = 20000;
   if (*total_count > 0)
-    cur_distance = (double) (*total_distance) / (double) (*total_count);
+    cur_distance = (double) ((*unsat_site - 1)* max) + (double) (*total_distance) / (double) (*total_count);
   else
-    cur_distance = -1.0;
+    cur_distance = (double) (*unsat_site * max - max);
+  if (cur_distance < 0)
+    cur_distance = 0;
 
 #else
 
@@ -943,7 +947,7 @@ static inline u8 has_new_bits(u8* virgin_map) {
     cur_distance = -1.0;
 
 #endif /* ^__x86_64__ */
-  cur_ratio = *(double*) (trace_bits + MAP_SIZE + 16 + CALL_STACK_SIZE); 
+  cur_ratio = *(double*) (trace_bits + MAP_SIZE + 16 + CALL_STACK_SIZE + 8); 
 
   u8   ret = 0;
 
@@ -1288,7 +1292,10 @@ static void minimize_bits(u8* dst, u8* src) {
 static void update_bitmap_score(struct queue_entry* q) {
 
   u32 i;
-  u64 fav_factor = q->exec_us * q->len;
+  u64 fav_factor = q->exec_us * q->len; // * q->ratio * q->distance;
+  /* 
+   * it is better to normalized distance. And distinguish values of zero.
+   */
 
   /* For every byte set in trace_bits[], see if there is a previous winner,
      and how it compares to us. */
@@ -1301,7 +1308,7 @@ static void update_bitmap_score(struct queue_entry* q) {
 
          /* Faster-executing or smaller test cases are favored. */
 
-         if (fav_factor > top_rated[i]->exec_us * top_rated[i]->len) continue;
+         if (fav_factor > top_rated[i]->exec_us * top_rated[i]->len) continue; // * top_rated[i]->ratio * top_rated[i]->distance) continue;
 
          /* Looks like we're going to win. Decrease ref count for the
             previous winner, discard its trace_bits[] if necessary. */
@@ -4864,8 +4871,8 @@ static u32 calculate_score(struct queue_entry* q) {
     if (normalized_d >= 0) {
 
         double p0 = (1.0 - normalized_d) * (1.0 - T) + 0.5 * T;
-        double p1 = (1.0 - q->ratio) * (1.0 - T) + 0.5 * T;
-        double p = p0 > p1? p0: p1;
+        //double p1 = (1.0 - q->ratio) * (1.0 - T) + 0.5 * T;
+        double p = p0;// > p1? p0: p1;
         power_factor = pow(2.0, 2.0 * (double) log2(MAX_FACTOR) * (p - 0.5));
 
     }// else WARNF ("Normalized distance negative: %f", normalized_d);

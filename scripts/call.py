@@ -24,6 +24,7 @@ if __name__ == '__main__':
   parser.add_argument ('-d', '--dot', type=str, required=True, help="Path to dot-file representing the graph.")
   parser.add_argument ('-o', '--out', type=str, required=True, help="Path to output file containing distance for each node.")
   parser.add_argument ('-s', '--sources', type=str, required=True, help="Source functions.")
+  parser.add_argument ('-ft', '--ftargets', type=str, required=False, help="Path to file of target functions.")
 
   args = parser.parse_args ()
 
@@ -47,13 +48,22 @@ if __name__ == '__main__':
           todo.append(o[1])
       done.append(tmp)
     #print('done', done)
-    finals = []
+    finals = set()
     for node, data in G.nodes(data=True):
       if node in done:
         label = data.get('label', '')
         if label != '':
-          finals.append(label.strip('"{}'))
+          finals.add(label.strip('"{}'))
     #print(finals)
-    out.write('\n'.join(finals))
+
+    with open(args.ftargets, 'r') as fp:
+      funcs = fp.readlines()
+      for func in funcs:
+        tokens = func.strip().split(',')
+        mangledName = tokens[0]
+        finals.add(mangledName)
+
+    #with open(args.ftargets, 'r') as fp:
+    out.write('\n'.join(list(finals)))
           
 
