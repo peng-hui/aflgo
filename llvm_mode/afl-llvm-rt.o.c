@@ -79,7 +79,7 @@ double __afl_call_ratio_initial[1];
 double* __afl_call_ratio = __afl_call_ratio_initial;
 
 __thread u32 __afl_prev_loc;
-__thread u32 __afl_call_loc;
+__thread u32 __afl_call_idx;
 
 
 /* Running in persistent mode? */
@@ -222,7 +222,7 @@ int __afl_persistent_loop(unsigned int max_cnt) {
       memset(__afl_call_ptr + CALL_STACK_SIZE, 0xFF, 8);
       __afl_area_ptr[0] = 1;
       __afl_prev_loc = 0;
-      __afl_call_loc = 0;
+      __afl_call_idx = 0;
       __afl_call_ratio_initial[0] = 0;
     }
 
@@ -240,8 +240,6 @@ int __afl_persistent_loop(unsigned int max_cnt) {
 
       __afl_area_ptr[0] = 1;
       __afl_prev_loc = 0;
-      // __afl_call_loc = 0;
-      //__afl_call_ratio = 0;
 
       return 1;
 
@@ -499,26 +497,32 @@ void llvm_profiling_call(const char* bbname) {
 }
 #endif /* ^AFLGO_TRACING */
 
-void call_tracing(const int32_t size)
+void call_tracing(const int32_t size, const int32_t index)
 	__attribute__((visibility("default")));
 
-void call_tracing(const int32_t size){
-  FILE* filefd = NULL;
+void call_tracing(const int32_t size, const int32_t index){
+  __afl_call_ptr[__afl_call_idx] = index;
+  __afl_call_idx += 1;
   u64 i = 0;
-  while (i < __afl_call_loc && i < CALL_STACK_SIZE && __afl_call_ptr[i] == i + 1) 
+  while (i < __afl_call_idx && i < CALL_STACK_SIZE && __afl_call_ptr[i] == i + 1) 
     i ++;
 
-  double ratio = (double) i/size;
-  if (i == __afl_call_loc) {
+  //double ratio = (double) i/size;
+  if (i == __afl_call_idx) {
     // this means we can try to set distance/count = 0
     memset(__afl_area_ptr + MAP_SIZE, 0, 16);
     i = size - i;
     //__afl_call_initial[CALL_STACK_SIZE] = (u8)((size - i) & 0xFF);
     memcpy(__afl_call_ptr + CALL_STACK_SIZE, &i, sizeof(i));
   }
+  /*
   if (*__afl_call_ratio < ratio)
     *__afl_call_ratio = ratio;
+    */
+  /*
+  FILE* filefd = NULL;
   filefd = fopen("runtime-log.txt", "a+");
-  fprintf(filefd, "%d %.2f %.2f \n", __afl_call_loc, ratio, __afl_call_ratio);
+  fprintf(filefd, "%d \n", __afl_call_idx); //, ratio, __afl_call_ratio);
   fflush(filefd);
+  */
 }

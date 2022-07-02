@@ -80,6 +80,11 @@ cl::opt<std::string> TraceFile(
     cl::desc("Input file containing the traces/callstack."),
     cl::value_desc("trace"));
 
+cl::opt<std::string> FuncFile(
+    "funcs",
+    cl::desc("Input file containing the functions to be instrumented."),
+    cl::value_desc("funcs"));
+
 cl::opt<std::string> OutDirectory(
     "outdir",
     cl::desc("Output directory where Ftargets.txt, Fnames.txt, and BBnames.txt are generated."),
@@ -130,6 +135,15 @@ namespace {
 }
 
 std::vector<std::string> LocList = {};
+
+std::vector<std::string> FilteredFuncList = {};
+int isFiltered (std::string func) {
+  auto it = std::find(FilteredFuncList.begin(), FilteredFuncList.end(), func);
+  if (it != FilteredFuncList.end()) {
+    return it - FilteredFuncList.begin() + 1;
+  }
+  return 0;
+}
 
 int inTrace (std::string loc) {
   auto it = std::find(LocList.begin(), LocList.end(), loc);
@@ -304,15 +318,17 @@ bool AFLCoverage::runOnModule(Module &M) {
 
     std::ofstream bbnames(OutDirectory + "/BBnames.txt", std::ofstream::out | std::ofstream::app);
     std::ofstream bbcalls(OutDirectory + "/BBcalls.txt", std::ofstream::out | std::ofstream::app);
-    std::ofstream fnames(OutDirectory + "/Fnames.txt", std::ofstream::out | std::ofstream::app);
+    //std::ofstream fnames(OutDirectory + "/Fnames.txt", std::ofstream::out | std::ofstream::app);
     std::ofstream ftargets(OutDirectory + "/Ftargets.txt", std::ofstream::out | std::ofstream::app);
     std::ofstream funcloc(OutDirectory + "/funcloc.txt", std::ofstream::out | std::ofstream::app);
 
     /* Create dot-files directory */
+    /*
     std::string dotfiles(OutDirectory + "/dot-files");
     if (sys::fs::create_directory(dotfiles)) {
       FATAL("Could not create directory %s.", dotfiles.c_str());
     }
+    */
 
     for (auto &F : M) {
       std::string function_str("");
@@ -328,11 +344,14 @@ bool AFLCoverage::runOnModule(Module &M) {
         unsigned Line;
         Line = subprogram->getLine();
         Filename = subprogram->getFilename().str();
+          std::size_t found = Filename.find_last_of("/");
+          if (found != std::string::npos)
+            Filename = Filename.substr(found + 1);
 
         function_str = funcName + "," + demangledFName.substr(0, Fpos) + "," + Filename + ":" + std::to_string(Line) + "\n";
-        funcloc << function_str;
         }
       }
+        funcloc << function_str;
 
       /* Black list of function names */
       if (isBlacklisted(&F)) {
@@ -354,13 +373,11 @@ bool AFLCoverage::runOnModule(Module &M) {
           static const std::string Xlibs("/usr/");
           if (filename.empty() || line == 0 || !filename.compare(0, Xlibs.size(), Xlibs))
             continue;
+          std::size_t found = filename.find_last_of("/");
+          if (found != std::string::npos)
+            filename = filename.substr(found + 1);
 
           if (bb_name.empty()) {
-
-            std::size_t found = filename.find_last_of("/\\");
-            if (found != std::string::npos)
-              filename = filename.substr(found + 1);
-
             bb_name = filename + ":" + std::to_string(line);
           }
             location = filename + ":" + std::to_string(line);
@@ -383,7 +400,7 @@ bool AFLCoverage::runOnModule(Module &M) {
 
             if (auto *c = dyn_cast<CallInst>(&I)) {
 
-              std::size_t found = filename.find_last_of("/\\");
+              std::size_t found = filename.find_last_of("/");
               if (found != std::string::npos)
                 filename = filename.substr(found + 1);
 
@@ -432,15 +449,17 @@ bool AFLCoverage::runOnModule(Module &M) {
 
       if (has_BBs) {
         /* Print CFG */
+        /*
         std::string cfgFileName = dotfiles + "/cfg." + funcName + ".dot";
         std::error_code EC;
         raw_fd_ostream cfgFile(cfgFileName, EC, sys::fs::F_None);
         if (!EC) {
           WriteGraph(cfgFile, &F, true);
         }
+        */
 
         if (is_target) {
-          if(function_str.size() != 0)
+          if(function_str.size() >= 0)
             ftargets << function_str;
         }
         // fnames << F.getName().str() << "," << demangledFName.substr(0, Fpos) << "\n";
@@ -472,9 +491,11 @@ bool AFLCoverage::runOnModule(Module &M) {
         new GlobalVariable(M, PointerType::get(Int8Ty, 0), false,
                            GlobalValue::ExternalLinkage, 0, "__afl_area_ptr");
 
+    /*
     GlobalVariable *AFLCallPtr =
         new GlobalVariable(M, PointerType::get(Int8Ty, 0), false,
                            GlobalValue::ExternalLinkage, 0, "__afl_call_ptr");
+    */
     /*
      * read from file to obtain the trace.
      * at each call site, check the call stack, and give a score. 
@@ -486,8 +507,8 @@ bool AFLCoverage::runOnModule(Module &M) {
         M, Int32Ty, false, GlobalValue::ExternalLinkage, 0, "__afl_prev_loc",
         0, GlobalVariable::GeneralDynamicTLSModel, 0, false);
 
-    GlobalVariable *AFLCallLoc = new GlobalVariable(
-        M, Int32Ty, false, GlobalValue::ExternalLinkage, 0, "__afl_call_loc",
+    GlobalVariable *AFLCallIdx = new GlobalVariable(
+        M, Int32Ty, false, GlobalValue::ExternalLinkage, 0, "__afl_call_idx",
         0, GlobalVariable::GeneralDynamicTLSModel, 0, false);
   
 
@@ -500,8 +521,21 @@ bool AFLCoverage::runOnModule(Module &M) {
     tracefile.close();
   }
 
+  if (!FuncFile.empty()) {
+    std::ifstream funcfile(FuncFile);
+    std::string func;
+    while (std::getline(funcfile, func))
+        FilteredFuncList.push_back(func);
+    funcfile.close();
+  }
+
     for (auto &F : M) {
 
+      log1 << F.getName().str() << "\n";
+      if(FilteredFuncList.size() != 0) {
+        if(isFiltered(F.getName().str()) <= 0)
+          continue;
+      }
       int distance = -1;
 
       for (auto &BB : F) {
@@ -532,42 +566,44 @@ bool AFLCoverage::runOnModule(Module &M) {
 
             // we do not even need to emphasize it is a call.
             if (auto *c = dyn_cast<CallInst>(&I)){ 
-              log1 << "dyn_cast"<<"\n";
-              log1 << "location" << location <<"\n";
+              //log1 << "dyn_cast"<<"\n";
+              // log1 << "location" << location <<"\n";
              unsigned int tmp =(unsigned) inTrace(location);
-              log1 << tmp <<"\n";
+             // XXX duplicated entry
+              //log1 << tmp <<"\n";
              if(tmp > 0) {
-              log1 << "inTrace"<<"\n";
+              //log1 << "inTrace"<<"\n";
               IRBuilder<> CallIRB(&I);
               CallIRB.SetInsertPoint(&I);
-              LoadInst *CallLoc = CallIRB.CreateLoad(AFLCallLoc);
-              CallLoc->setMetadata(M.getMDKindID("nosanitize"), MDNode::get(C, None));
-              // Value *CallLocCasted = CallIRB.CreateZExt(CallLoc, CallIRB.getInt32Ty());
-              //
+              /*
+              LoadInst *CallIdx = CallIRB.CreateLoad(AFLCallIdx);
+              CallIdx->setMetadata(M.getMDKindID("nosanitize"), MDNode::get(C, None));
 
               LoadInst *CallPtr = CallIRB.CreateLoad(AFLCallPtr);
               CallPtr->setMetadata(M.getMDKindID("nosanitize"), MDNode::get(C, None));
-              Value *CallPtrIdx = CallIRB.CreateGEP(CallPtr, CallLoc);
+              Value *CallPtrIdx = CallIRB.CreateGEP(CallPtr, CallIdx);
               StoreInst *CallStore = CallIRB.CreateStore(ConstantInt::get(Int8Ty, tmp & 0xFF), CallPtrIdx); // save afl_call_ptr[xx] = tmp
               CallStore->setMetadata(M.getMDKindID("nosanitize"), MDNode::get(C, None));
 
-              Value *Incr = CallIRB.CreateAdd(CallLoc, ConstantInt::get(Int32Ty, 1));
-              StoreInst *Store = CallIRB.CreateStore(Incr, AFLCallLoc);
+              Value *Incr = CallIRB.CreateAdd(CallIdx, ConstantInt::get(Int32Ty, 1));
+              StoreInst *Store = CallIRB.CreateStore(Incr, AFLCallIdx);
               Store->setMetadata(M.getMDKindID("nosanitize"), MDNode::get(C, None));
+              */
 
               Type *Args[] = {
+                Int32Ty,
                 Int32Ty
               };
               FunctionType *FTy = FunctionType::get(Type::getVoidTy(M.getContext()), Args, false);
               auto instrumented = M.getOrInsertFunction("call_tracing", FTy);
-              CallIRB.CreateCall(instrumented, {ConstantInt::get(Int32Ty, LocList.size())});
+              CallIRB.CreateCall(instrumented, {ConstantInt::get(Int32Ty, LocList.size()), ConstantInt::get(Int32Ty, tmp)});
               // before current callsite
               // if matched, we only compute the last distance to target.
               CallIRB.SetInsertPoint(I.getNextNode());
               // after current callsite.
-              CallLoc = CallIRB.CreateLoad(AFLCallLoc);
-              Value *Decr = CallIRB.CreateSub(CallLoc, ConstantInt::get(Int32Ty, 1));
-              StoreInst *DecrStore = CallIRB.CreateStore(Decr, AFLCallLoc);
+              LoadInst *CallIdx = CallIRB.CreateLoad(AFLCallIdx);
+              Value *Decr = CallIRB.CreateSub(CallIdx, ConstantInt::get(Int32Ty, 1));
+              StoreInst *DecrStore = CallIRB.CreateStore(Decr, AFLCallIdx);
               DecrStore->setMetadata(M.getMDKindID("nosanitize"), MDNode::get(C, None));
             }
           }
@@ -635,6 +671,7 @@ bool AFLCoverage::runOnModule(Module &M) {
         Store->setMetadata(M.getMDKindID("nosanitize"), MDNode::get(C, None));
 
         if (distance >= 0) {
+          //log1 << "location  " << distance <<"   :\n";
 
           ConstantInt *Distance =
               ConstantInt::get(LargestType, (unsigned) distance);

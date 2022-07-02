@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 
-import argparse
+import argparse, re
 import collections
 import functools
 import networkx as nx
@@ -36,6 +36,8 @@ if __name__ == '__main__':
         calls = fp.readlines()
         for call in calls:
             tokens = call.strip().split(',')
+            if tokens[0] == '':
+                continue
             mangledName = tokens[1]
             uniqueId = tokens[2] + tokens[3]
             bbfunctionMap[uniqueId] = mangledName
@@ -55,7 +57,7 @@ if __name__ == '__main__':
     target_locations = []
     with open(args.targets, 'r') as fp:
         target_locations = [i.strip() for i in fp.readlines()]
-    #print('target locations:', str(target_locations))
+    print('target locations:', str(target_locations))
     # currently we assume we already obtain a target chain, that is, in the interesting functions, we have the targets. 
     # if a function does not contain a target, we think the function does not need to have distance metrics?
     # we use only intra-procedural analysis and award-based fitness functions.
@@ -74,7 +76,12 @@ if __name__ == '__main__':
     file2BBs = {}
     with open(args.bbnames, 'r') as fp:
         for i in fp.readlines():
-            tokens = i.strip().split(':')
+            i = i.strip()
+            if i == '':
+                continue
+            tokens = i.split(':')
+            if len(tokens) !=2:
+                continue
             if tokens[0] not in file2BBs.keys():
                 file2BBs[tokens[0]] = []
             file2BBs[tokens[0]].append(int(tokens[1]))
@@ -100,9 +107,14 @@ if __name__ == '__main__':
         cdgFile = join(args.cdg, '%d-cdg.dot' % n)
         with open(cdgFile, 'r') as fp:
             l = fp.readline().strip().split('"')
-            if l[1] not in targetfunctionMap.keys():
+            nums = re.findall(r'\d+', l[1])
+            t = l[1].replace(nums[0], str(int(nums[0]) + 1))
+            if l[1] in targetfunctionMap.keys():
+                ftarget = targetfunctionMap[l[1]]
+            elif t in targetfunctionMap.keys():
+                ftarget = targetfunctionMap[t]
+            else:
                 continue
-            ftarget = targetfunctionMap[l[1]]
             #print(ftarget)
             # the function is target function.
             AST = nx.DiGraph(nx.drawing.nx_pydot.read_dot(astFile))

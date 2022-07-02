@@ -140,7 +140,10 @@ static void edit_params(u32 argc, char** argv) {
   while (--argc) {
     u8* cur = *(++argv);
 
-    if (!strncmp(cur, "-distance", 9)
+    if (
+        !strncmp(cur, "-trace", 6)
+        || !strncmp(cur, "-funcs", 6)
+        || !strncmp(cur, "-distance", 9)
         || !strncmp(cur, "-targets", 8)
         || !strncmp(cur, "-outdir", 7))
       cc_params[cc_par_cnt++] = "-mllvm";
