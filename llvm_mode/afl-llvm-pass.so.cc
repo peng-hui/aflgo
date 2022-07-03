@@ -31,6 +31,7 @@
 #include <stdlib.h>
 #include <unistd.h>
 
+#include <llvm/Support/raw_ostream.h>
 #include <iostream>
 #include <fstream>
 #include <string>
@@ -196,7 +197,9 @@ static bool isBlacklisted(const Function *F) {
     "free",
     "malloc",
     "calloc",
-    "realloc"
+    "realloc",
+    "dec_call_idx",
+    "call_tracing"
   };
 
   for (auto const &BlacklistFunc : Blacklist) {
@@ -531,7 +534,7 @@ bool AFLCoverage::runOnModule(Module &M) {
 
     for (auto &F : M) {
 
-      log1 << F.getName().str() << "\n";
+      //log1 << F.getName().str() << "\n";
       if(FilteredFuncList.size() != 0) {
         if(isFiltered(F.getName().str()) <= 0)
           continue;
@@ -565,31 +568,28 @@ bool AFLCoverage::runOnModule(Module &M) {
             location = filename + ":" + std::to_string(line);
 
             // we do not even need to emphasize it is a call.
-            if (auto *c = dyn_cast<CallInst>(&I)){ 
-              //log1 << "dyn_cast"<<"\n";
-              // log1 << "location" << location <<"\n";
-             unsigned int tmp =(unsigned) inTrace(location);
+            unsigned int tmp =(unsigned) inTrace(location);
+            if (tmp <= 0) // not in trace
+               continue;
              // XXX duplicated entry
-              //log1 << tmp <<"\n";
-             if(tmp > 0) {
-              //log1 << "inTrace"<<"\n";
+              log1 << location << "  : " << tmp <<"\n";
+              if (isa<CallInst>(&I)|| isa<InvokeInst> (&I)) {
+                if(auto *c = dyn_cast<CallInst>(&I)){
+                  if (auto *CalledF =c->getCalledFunction()) {
+                    if (isBlacklisted(CalledF)) 
+                      continue;
+                  }
+                }
+                else{
+                    auto *d = dyn_cast<InvokeInst> (&I);
+                  if (auto *CalledF =d->getCalledFunction()) {
+                    if (isBlacklisted(CalledF)) 
+                      continue;
+                  }
+                }
+              //log1 << "dyn_cast"<<"\n";
+              log1 << "--- above call" << location <<"\n";
               IRBuilder<> CallIRB(&I);
-              CallIRB.SetInsertPoint(&I);
-              /*
-              LoadInst *CallIdx = CallIRB.CreateLoad(AFLCallIdx);
-              CallIdx->setMetadata(M.getMDKindID("nosanitize"), MDNode::get(C, None));
-
-              LoadInst *CallPtr = CallIRB.CreateLoad(AFLCallPtr);
-              CallPtr->setMetadata(M.getMDKindID("nosanitize"), MDNode::get(C, None));
-              Value *CallPtrIdx = CallIRB.CreateGEP(CallPtr, CallIdx);
-              StoreInst *CallStore = CallIRB.CreateStore(ConstantInt::get(Int8Ty, tmp & 0xFF), CallPtrIdx); // save afl_call_ptr[xx] = tmp
-              CallStore->setMetadata(M.getMDKindID("nosanitize"), MDNode::get(C, None));
-
-              Value *Incr = CallIRB.CreateAdd(CallIdx, ConstantInt::get(Int32Ty, 1));
-              StoreInst *Store = CallIRB.CreateStore(Incr, AFLCallIdx);
-              Store->setMetadata(M.getMDKindID("nosanitize"), MDNode::get(C, None));
-              */
-
               Type *Args[] = {
                 Int32Ty,
                 Int32Ty
@@ -597,16 +597,29 @@ bool AFLCoverage::runOnModule(Module &M) {
               FunctionType *FTy = FunctionType::get(Type::getVoidTy(M.getContext()), Args, false);
               auto instrumented = M.getOrInsertFunction("call_tracing", FTy);
               CallIRB.CreateCall(instrumented, {ConstantInt::get(Int32Ty, LocList.size()), ConstantInt::get(Int32Ty, tmp)});
-              // before current callsite
-              // if matched, we only compute the last distance to target.
-              CallIRB.SetInsertPoint(I.getNextNode());
-              // after current callsite.
-              LoadInst *CallIdx = CallIRB.CreateLoad(AFLCallIdx);
-              Value *Decr = CallIRB.CreateSub(CallIdx, ConstantInt::get(Int32Ty, 1));
-              StoreInst *DecrStore = CallIRB.CreateStore(Decr, AFLCallIdx);
-              DecrStore->setMetadata(M.getMDKindID("nosanitize"), MDNode::get(C, None));
+
+              
+
+              auto *temp = I.getNextNode();
+              instrumented = M.getOrInsertFunction("dec_call_idx", FunctionType::get(Type::getVoidTy(M.getContext()), {}, false));
+              if (temp != NULL) {
+                CallIRB.SetInsertPoint(temp);
+                CallIRB.CreateCall(instrumented, {});
+              }
+              else{
+                /*
+                std::string str;
+                llvm::raw_string_ostream(str) << I;
+                log1 << location << "\n";
+                log1 << "created end of BB" << str<< "\n";
+                */
+                auto *d = dyn_cast<InvokeInst> (&I);
+                auto *bb1 = d->getNormalDest();
+                BasicBlock::iterator ip = bb1->getFirstInsertionPt();
+                IRBuilder<> CallIRB1(&(*ip));
+                CallIRB1.CreateCall(instrumented, {});
+              }
             }
-          }
           }
 
           if (!bb_name.empty()) {

@@ -286,7 +286,7 @@ static struct extra_data* a_extras;   /* Automatically selected extras    */
 static u32 a_extras_cnt;              /* Total number of tokens available */
 
 static double cur_distance = -1.0;     /* Distance of executed input       */
-static double cur_ratio = 0;     /* Distance of executed input       */
+// static double cur_ratio = 0;     /* Distance of executed input       */
 static double max_distance = -1.0;     /* Maximal distance for any input   */
 static double min_distance = -1.0;     /* Minimal distance for any input   */
 static u32 t_x = 10;                  /* Time to exploitation (Default: 10 min) */
@@ -431,11 +431,11 @@ static void bind_to_free_cpu(void) {
 
   }
 
-  d = opendir("/proc");
+  d = opendir("/host/proc");
 
   if (!d) {
 
-    WARNF("Unable to access /proc - can't scan for free CPU cores.");
+    WARNF("Unable to access /host/proc - can't scan for free CPU cores.");
     return;
 
   }
@@ -461,7 +461,7 @@ static void bind_to_free_cpu(void) {
 
     if (!isdigit(de->d_name[0])) continue;
 
-    fn = alloc_printf("/proc/%s/status", de->d_name);
+    fn = alloc_printf("/host/proc/%s/status", de->d_name);
 
     if (!(f = fopen(fn, "r"))) {
       ck_free(fn);
@@ -802,7 +802,7 @@ static void add_to_queue(u8* fname, u32 len, u8 passed_det) {
   q->passed_det   = passed_det;
 
   q->distance = cur_distance;
-  q->ratio = cur_ratio;
+  //q->ratio = cur_ratio;
   if (cur_distance > 0) {
 
     if (max_distance <= 0) {
@@ -918,17 +918,26 @@ static inline u8 has_new_bits(u8* virgin_map) {
   /* Calculate distance of current input to targets */
   u64* total_distance = (u64*) (trace_bits + MAP_SIZE);
   u64* total_count = (u64*) (trace_bits + MAP_SIZE + 8);
-  u8* unsat_site = (u8*) (trace_bits + MAP_SIZE + 16 + CALL_STACK_SIZE);
+  u32* unsat_site = (u32*) (trace_bits + MAP_SIZE + 16 + CALL_STACK_SIZE);
   // the count means the number of BB executed in trace.
   // if we only consider the ones in the sequence?
   // We consider 
-  u32 max = 20000;
-  if (*total_count > 0)
-    cur_distance = (double) ((*unsat_site - 1)* max) + (double) (*total_distance) / (double) (*total_count);
-  else
-    cur_distance = (double) (*unsat_site * max - max);
+  u32 max = 10000;
+//fprintf(stderr, "[++Time %llu be] cur_distance: %4lf, unsat_site %d, total_distance %4llu, total_count: %4llu\n", get_cur_time(), cur_distance, *unsat_site, *total_distance, *total_count);
+  if (*unsat_site >= 1) {
+    if (*total_count > 0) {
+      cur_distance = (double) ((*unsat_site - 1)* max) + (double) (*total_distance) / (double) (*total_count);
+    }
+    else{
+      cur_distance = (*unsat_site - 1) * max;
+    }
+  }
+  else {
+      cur_distance = (double) (*total_distance) / (double) (*total_count);
+  }
   if (cur_distance < 0)
     cur_distance = 0;
+  fprintf(stderr, "[++Time %llu] cur_distance: %4lf, unsat_site %d, total_distance %4llu, total_count: %4llu\n", get_cur_time(), cur_distance, *unsat_site, *total_distance, *total_count);
 
 #else
 
@@ -947,7 +956,7 @@ static inline u8 has_new_bits(u8* virgin_map) {
     cur_distance = -1.0;
 
 #endif /* ^__x86_64__ */
-  cur_ratio = *(double*) (trace_bits + MAP_SIZE + 16 + CALL_STACK_SIZE + 8); 
+  // cur_ratio = *(double*) (trace_bits + MAP_SIZE + 16 + CALL_STACK_SIZE + 8); 
 
   u8   ret = 0;
 
@@ -1292,7 +1301,9 @@ static void minimize_bits(u8* dst, u8* src) {
 static void update_bitmap_score(struct queue_entry* q) {
 
   u32 i;
-  u64 fav_factor = q->exec_us * q->len; // * q->ratio * q->distance;
+  //u64 fav_factor = q->exec_us * q->len; // * q->ratio * q->distance;
+  u64 fav_factor1 = q->distance;
+
   /* 
    * it is better to normalized distance. And distinguish values of zero.
    */
@@ -1308,7 +1319,8 @@ static void update_bitmap_score(struct queue_entry* q) {
 
          /* Faster-executing or smaller test cases are favored. */
 
-         if (fav_factor > top_rated[i]->exec_us * top_rated[i]->len) continue; // * top_rated[i]->ratio * top_rated[i]->distance) continue;
+         //if (fav_factor > top_rated[i]->exec_us * top_rated[i]->len) continue; // * top_rated[i]->ratio * top_rated[i]->distance) continue;
+         if (fav_factor1 > top_rated[i]->distance) continue; // * top_rated[i]->ratio * top_rated[i]->distance) continue;
 
          /* Looks like we're going to win. Decrease ref count for the
             previous winner, discard its trace_bits[] if necessary. */
@@ -2655,7 +2667,7 @@ static u8 calibrate_case(char** argv, struct queue_entry* q, u8* use_mem,
       has_new_bits(virgin_bits);
 
       q->distance = cur_distance;
-      q->ratio = cur_ratio;
+      //q->ratio = cur_ratio;
 
       if (cur_distance > 0) {
 
@@ -3629,7 +3641,7 @@ static double get_runnable_processes(void) {
      computed in funny ways and sometimes don't reflect extremely short-lived
      processes well. */
 
-  FILE* f = fopen("/proc/stat", "r");
+  FILE* f = fopen("/host/proc/stat", "r");
   u8 tmp[1024];
   u32 val = 0;
 
@@ -7404,7 +7416,7 @@ static void check_crash_handling(void) {
   /* This is Linux specific, but I don't think there's anything equivalent on
      *BSD, so we can just let it slide for now. */
 
-  s32 fd = open("/proc/sys/kernel/core_pattern", O_RDONLY);
+  s32 fd = open("/host/proc/sys/kernel/core_pattern", O_RDONLY);
   u8  fchar;
 
   if (fd < 0) return;
@@ -7525,7 +7537,7 @@ static void get_core_count(void) {
 
 #else
 
-  FILE* f = fopen("/proc/stat", "r");
+  FILE* f = fopen("/host/proc/stat", "r");
   u8 tmp[1024];
 
   if (!f) return;

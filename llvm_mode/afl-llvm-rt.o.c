@@ -499,30 +499,41 @@ void llvm_profiling_call(const char* bbname) {
 
 void call_tracing(const int32_t size, const int32_t index)
 	__attribute__((visibility("default")));
+void dec_call_idx()
+	__attribute__((visibility("default")));
+
+void dec_call_idx() {
+  __afl_call_idx -= 1;
+  FILE* filefd = NULL;
+  filefd = fopen("runtime-log.txt", "a+");
+  fprintf(filefd, "minus idx: from %d to %d\n", __afl_call_idx + 1,__afl_call_idx);
+  fflush(filefd);
+}
 
 void call_tracing(const int32_t size, const int32_t index){
   __afl_call_ptr[__afl_call_idx] = index;
   __afl_call_idx += 1;
-  u64 i = 0;
+  u32 i = 0;
   while (i < __afl_call_idx && i < CALL_STACK_SIZE && __afl_call_ptr[i] == i + 1) 
     i ++;
 
   //double ratio = (double) i/size;
+  u32 ret = size;
   if (i == __afl_call_idx) {
     // this means we can try to set distance/count = 0
     memset(__afl_area_ptr + MAP_SIZE, 0, 16);
-    i = size - i;
+    ret  =(u32)(size - __afl_call_idx);
     //__afl_call_initial[CALL_STACK_SIZE] = (u8)((size - i) & 0xFF);
-    memcpy(__afl_call_ptr + CALL_STACK_SIZE, &i, sizeof(i));
+    memcpy(__afl_call_ptr + CALL_STACK_SIZE, &ret, sizeof(ret));
   }
-  /*
-  if (*__afl_call_ratio < ratio)
-    *__afl_call_ratio = ratio;
-    */
-  /*
+  //if (*__afl_call_ratio < ratio)
+  //  *__afl_call_ratio = ratio;
   FILE* filefd = NULL;
   filefd = fopen("runtime-log.txt", "a+");
-  fprintf(filefd, "%d \n", __afl_call_idx); //, ratio, __afl_call_ratio);
+  fprintf(filefd, "idx: %d, cix %d, size %d, i %d, unsat %d \n", index, __afl_call_idx, size, i, ret); //, ratio, __afl_call_ratio);
+  for(int j = 0; j < __afl_call_idx; j ++ ){
+    fprintf(filefd, "call_ptr_content %d  ", __afl_call_ptr[j]);
+  }
+  fprintf(filefd, "\n");
   fflush(filefd);
-  */
 }
